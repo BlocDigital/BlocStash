@@ -67,6 +67,34 @@ Only the administrator can invite people, and registration is invite-only.
 
 Invitations expire after **five minutes** and work **once**. If it has expired, just create a new one.
 
+### Auto-start with Windows (optional)
+
+So you don't have to double-click `start-blocstash.bat` after every reboot, you can have Windows start the server automatically.
+
+**Option A – Startup folder (simplest, runs when you sign in)**
+
+1. Open your BlocStash folder, right-click **`start-blocstash.bat`**, and choose **Create shortcut** (on Windows 11, click **Show more options** first).
+2. Press **`Win + R`**, type `shell:startup`, and press **Enter** to open your Windows Startup folder.
+3. Move the shortcut you just created into the Startup folder.
+4. *(Optional)* Right-click the shortcut in the Startup folder → **Properties**, set **Run** to **Minimized**, and click **OK** so the terminal window starts out of the way in your taskbar.
+
+Because this runs inside your desktop session, the **Storage** folder picker continues to work normally.
+
+**Option B – Task Scheduler (runs in the background without a window, or before sign-in)**
+
+1. Press **`Win + R`**, type `taskschd.msc`, and press **Enter** to open **Task Scheduler**.
+2. Click **Create Task...** in the right-hand panel and give it a name such as `BlocStash`.
+3. On the **General** tab, choose **Run whether user is logged on or not** (or leave **Run only when user is logged on** if you still want to use the **Storage** folder picker).
+4. On the **Triggers** tab, click **New...** and set **Begin the task** to **At startup** (or **At log on**).
+5. On the **Actions** tab, click **New...**, keep **Start a program**, and fill in:
+   - **Program/script:** `node`
+   - **Add arguments:** `server\stash-server.js`
+   - **Start in:** the full path to your BlocStash folder (for example `C:\Users\<you>\BlocStash`)
+6. On the **Conditions** tab, uncheck **Start the task only if the computer is on AC power** if the server is a laptop.
+7. Click **OK** to save the task.
+
+> If you set `STASH_DIR` in `start-blocstash.bat`, set the same environment variable in Windows (*System Properties → Environment Variables*) when using Task Scheduler so `node` picks it up.
+
 ### Troubleshooting
 
 - **The phone can't open the address:** check that both devices are on the same Wi-Fi, that the firewall allows Node.js on *Private networks*, and that the terminal window is still open. Guest Wi-Fi or "client/AP isolation" on the router stops devices from seeing each other.
