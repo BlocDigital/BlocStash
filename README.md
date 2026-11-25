@@ -46,7 +46,7 @@ There are two ways to get a device connected. Both need the device to be on the 
 
 Open the phone address from the terminal (`http://<PC-LAN-IP>:8787`) in the phone's browser and sign in.
 
-![Phone browser on the PC's address showing the BlocStash sign-in screen](docs/screenshots/05-phone-signin.png)
+<img src="docs/screenshots/05-phone-signin.png" alt="Phone browser on the PC's address showing the BlocStash sign-in screen" width="280">
 
 **Option B – invite a new member (flatmate, partner, your own second phone)**
 
@@ -63,7 +63,7 @@ Only the administrator can invite people, and registration is invite-only.
 
 4. The phone opens the join page. The new member chooses their own username and a password of at least 12 characters, then taps **Join household**.
 
-![Phone join page opened from the QR code](docs/screenshots/06-phone-join.png)
+<img src="docs/screenshots/06-phone-join.png" alt="Phone join page opened from the QR code" width="280">
 
 Invitations expire after **five minutes** and work **once**. If it has expired, just create a new one.
 
