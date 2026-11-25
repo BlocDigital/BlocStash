@@ -118,7 +118,6 @@ Good to know:
 - The address shown by the server for the Linux container (`100.115.x.x`) is internal and is hidden for ChromeOS. Use the Chromebook's Wi-Fi address from step 5.
 - Your Wi-Fi address can change after a reboot. Check *Settings → Network* again, or reserve a fixed address for the Chromebook in your router.
 - Chromebook storage is often small. Use **Central storage folder** (below) to keep media on an external drive or SD card.
-
 ## Libraries and permissions
 
 - **Personal:** each member can view and manage their own private library. The household administrator cannot read another member's private library.
