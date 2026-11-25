@@ -11,7 +11,7 @@ You need a Windows PC to act as the server (using a Chromebook or Linux machine 
 ### 1. Start the server
 
 1. Install [Node.js](https://nodejs.org/) 18 or newer. (Optional but recommended: install [Python 3](https://www.python.org/downloads/) so the invitation QR code can be drawn. During setup, tick **Add python.exe to PATH**. Without Python you can still share the invitation link.)
-2. Extract this project to a permanent folder, for example `C:\Users\<you>\BlocStash`.
+2. Extract this project([Release1.0](https://github.com/BlocDigital/BlocStash/releases/tag/v1.0)) to a permanent folder, for example `C:\Users\<you>\BlocStash`.
 3. Double-click **`start-blocstash.bat`**. A terminal window opens and prints two addresses:
 
 ![Terminal showing the localhost address and the phone address](docs/screenshots/01-start-server.png)
