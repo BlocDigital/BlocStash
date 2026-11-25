@@ -33,3 +33,10 @@
 - QR invitation is a locally generated SVG, using a bundled Python QR library (no online QR/CDN request). Requires Python 3 available on the host; copyable invite URL remains fallback.
 - Invitations expire after five minutes and are single-use. QR endpoint refuses expired or used codes.
 - Verified admin create invite, QR SVG route returns HTTP 200, member joins, and member invite attempt returns HTTP 403.
+
+### ChromeOS / Linux support (update)
+- Chromebook clients work through Chrome; no changes needed.
+- Server runs inside ChromeOS Linux: startup detects ChromeOS Linux, hides the unreachable container address and prints port-forwarding steps.
+- Central storage folder: non-Windows servers accept a typed absolute path (the native folder picker remains Windows-only).
+- Invitation URL/QR: uses `STASH_PUBLIC_HOST` if set, otherwise falls back to the network address when the admin browses via localhost.
+- Tested on a generic Linux host only; not yet tested on physical Chromebook hardware.

@@ -1,5 +1,5 @@
 'use strict';
-const CACHE = 'blocstash-shell-v15';
+const CACHE = 'blocstash-shell-v16';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png', './favicon.ico'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));

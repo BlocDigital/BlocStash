@@ -329,7 +329,7 @@ $("#drv").onclick=async()=>{
     }
     await showTrash();
   }else if(choice==="invite"){
-    try{const r=await fetch("/api/household/invitations",{method:"POST",credentials:"same-origin"});if(!r.ok)throw 0;const d=await r.json();const link=location.origin+"/?invite="+encodeURIComponent(d.code),copy=el("button","link","Copy invitation link"),qr=el("img");qr.alt="QR code for one-time household invitation";qr.style.cssText="display:block;width:240px;height:240px;max-width:100%;margin:12px auto;background:white;padding:10px;border-radius:12px";qr.src="/api/household/invitation-qr?code="+encodeURIComponent(d.code);copy.onclick=()=>navigator.clipboard?navigator.clipboard.writeText(link).then(()=>toast("Invitation link copied")).catch(()=>toast("Copy unavailable; select the link manually")):toast("Copy unavailable; select the link manually");await modal("Household invitation",[qr,el("p","",link),el("p","","Admin-generated invitation. Expires in five minutes and can be used once. Only administrators can create invitations."),copy],[["Close",null]])}catch(e){toast("Could not create invitation")}
+    try{const r=await fetch("/api/household/invitations",{method:"POST",credentials:"same-origin"});if(!r.ok)throw 0;const d=await r.json();const link=d.url||(location.origin+"/?invite="+encodeURIComponent(d.code)),copy=el("button","link","Copy invitation link"),qr=el("img");qr.alt="QR code for one-time household invitation";qr.style.cssText="display:block;width:240px;height:240px;max-width:100%;margin:12px auto;background:white;padding:10px;border-radius:12px";qr.src="/api/household/invitation-qr?code="+encodeURIComponent(d.code);copy.onclick=()=>navigator.clipboard?navigator.clipboard.writeText(link).then(()=>toast("Invitation link copied")).catch(()=>toast("Copy unavailable; select the link manually")):toast("Copy unavailable; select the link manually");await modal("Household invitation",[qr,el("p","",link),el("p","","Admin-generated invitation. Expires in five minutes and can be used once. Only administrators can create invitations."),copy],[["Close",null]])}catch(e){toast("Could not create invitation")}
   }else if(choice==="logout"){if(cfg.mode==="household")await fetch("/api/auth/logout",{method:"POST",credentials:"same-origin"});LS.removeItem("stash.cfg");location.reload()}
 };
 // ---- upload (EXIF location/date, thumbnails, then PUT to the drive)
@@ -402,9 +402,15 @@ async function chooseHouseholdStorage(){
   if(cfg?.mode!=="household"||cfg.user?.role!=="admin"){toast("Only the household administrator can change storage.");return}
   const current=await fetch("/api/household/storage",{credentials:"same-origin",cache:"no-store"}).then(r=>r.ok?r.json():Promise.reject(new Error("Could not read storage settings"))).catch(e=>{toast(e.message);return null});
   if(!current)return;
-  const promptText=`Current folder: ${current.path}${current.available?"":"\n\nSTORAGE UNAVAILABLE"}\n\nThe Windows server will open a folder picker. Existing media and trash will be copied before switching. The old folder is kept as a backup.`;
-  if(!confirm(promptText+"\n\nChoose a new central folder?"))return;
-  try{const r=await fetch("/api/household/storage/select",{method:"POST",credentials:"same-origin"});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||data.message||"Folder selection failed");if(data.cancelled){toast("Storage selection cancelled");return}toast("Central storage updated. All household devices now use this folder.",6000)}catch(e){toast(e.message||"Could not change central storage",7000)}
+  let chosenPath="";
+  if(current.picker===false){
+    chosenPath=(prompt(`Current folder: ${current.path}${current.available?"":"\n\nSTORAGE UNAVAILABLE"}\n\nEnter the full path of the new central folder on the server (for example /mnt/chromeos/removable/MyDrive/BlocStash). Existing media and trash will be copied before switching. The old folder is kept as a backup.`,"")||"").trim();
+    if(!chosenPath)return;
+  }else{
+    const promptText=`Current folder: ${current.path}${current.available?"":"\n\nSTORAGE UNAVAILABLE"}\n\nThe Windows server will open a folder picker. Existing media and trash will be copied before switching. The old folder is kept as a backup.`;
+    if(!confirm(promptText+"\n\nChoose a new central folder?"))return;
+  }
+  try{const r=await fetch("/api/household/storage/select",{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:chosenPath})});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||data.message||"Folder selection failed");if(data.cancelled){toast("Storage selection cancelled");return}toast("Central storage updated. All household devices now use this folder.",6000)}catch(e){toast(e.message||"Could not change central storage",7000)}
 }
 async function chooseFolder(){
   if(!cfg || cfg.mode!=="folder"){toast("Choose the household storage folder after signing in as administrator.");return}

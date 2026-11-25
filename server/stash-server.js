@@ -57,16 +57,24 @@ async function assertStorageReady() {
 // Purge expired trash entries only after the 30-day recovery window. An offline
 // selected drive is deliberately not replaced with the default storage folder.
 (async()=>{try{await assertStorageReady();const cutoff=Date.now()-30*86400*1000;const keep=[];for(const item of household.trash){if(item.deleted<cutoff){await fsp.rm(path.join(trashDir(),item.stored),{force:true}).catch(()=>{});}else keep.push(item);}if(keep.length!==household.trash.length){household.trash=keep;await saveHouse();}}catch(e){console.error(e.message)}})();
-async function selectHouseholdStorage() {
-  if(process.platform!=='win32') throw Object.assign(new Error('The server-side folder picker is currently available on Windows only.'),{statusCode:501});
-  const script = "Add-Type -AssemblyName System.Windows.Forms; $d=New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description='Choose the central BlocStash household media folder'; $d.ShowNewFolderButton=$true; if($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Write($d.SelectedPath)}";
-  const picked=spawnSync('powershell.exe',['-NoProfile','-STA','-Command',script],{encoding:'utf8',windowsHide:false,timeout:120000});
-  if(picked.error) throw picked.error;
-  if(picked.status!==0) throw new Error((picked.stderr||'Could not open the Windows folder picker.').trim());
-  const chosen=(picked.stdout||'').trim(); if(!chosen) return null;
+async function selectHouseholdStorage(requestedPath) {
+  // Windows can open a native folder picker. Other systems (Linux, ChromeOS Linux, macOS)
+  // have no desktop dialog available to the server, so the administrator types the full path.
+  let chosen = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+  if(chosen) {
+    if(!path.isAbsolute(chosen)) throw Object.assign(new Error('Enter the full folder path, for example /mnt/chromeos/removable/MyDrive/BlocStash'),{statusCode:400});
+  } else {
+    if(process.platform!=='win32') throw Object.assign(new Error('Enter the full path of the folder to use as central storage.'),{statusCode:400});
+    const script = "Add-Type -AssemblyName System.Windows.Forms; $d=New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description='Choose the central BlocStash household media folder'; $d.ShowNewFolderButton=$true; if($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::Write($d.SelectedPath)}";
+    const picked=spawnSync('powershell.exe',['-NoProfile','-STA','-Command',script],{encoding:'utf8',windowsHide:false,timeout:120000});
+    if(picked.error) throw picked.error;
+    if(picked.status!==0) throw new Error((picked.stderr||'Could not open the Windows folder picker.').trim());
+    chosen=(picked.stdout||'').trim(); if(!chosen) return null;
+  }
   const dest=path.resolve(chosen), rel=path.relative(DIR,dest), back=path.relative(dest,DIR);
   if(dest===DIR || (!rel.startsWith('..'+path.sep)&&rel!=='..') || (!back.startsWith('..'+path.sep)&&back!=='..')) throw Object.assign(new Error('Choose a folder outside the BlocStash application and metadata folder.'),{statusCode:400});
-  await fsp.mkdir(dest,{recursive:true}); await fsp.access(dest,fs.constants.R_OK|fs.constants.W_OK);
+  try { await fsp.mkdir(dest,{recursive:true}); await fsp.access(dest,fs.constants.R_OK|fs.constants.W_OK); }
+  catch(e) { throw Object.assign(new Error('That folder cannot be used (it must exist or be creatable, and be writable): '+e.message),{statusCode:400}); }
   const nextTrash=path.join(dest,'.stash-trash'); await fsp.mkdir(nextTrash,{recursive:true});
   // Copy first; only switch the active root after every existing asset and
   // recoverable-trash file has been copied successfully. Keep the old copy.
@@ -144,25 +152,24 @@ async function householdApi(req,res,url) {
     if (p === '/api/household/storage' && method === 'GET') {
       if(user.role!=='admin') return send(res,403,'admin required');
       let available=true;try{await assertStorageReady()}catch{available=false;}
-      return send(res,200,JSON.stringify({path:storageRoot,available,configured:!!household.storageRoot}),MIME.json,{'Cache-Control':'no-store'});
+      return send(res,200,JSON.stringify({path:storageRoot,available,configured:!!household.storageRoot,picker:process.platform==='win32'}),MIME.json,{'Cache-Control':'no-store'});
     }
     if (p === '/api/household/storage/select' && method === 'POST') {
       if(user.role!=='admin') return send(res,403,'admin required');
-      try { const selected=await selectHouseholdStorage(); if(!selected)return send(res,200,JSON.stringify({cancelled:true}),MIME.json); return send(res,200,JSON.stringify({path:selected}),MIME.json,{'Cache-Control':'no-store'}); }
+      try { let wanted=''; try { wanted=JSON.parse((await readBody(req,8192)).toString('utf8')||'{}').path||''; } catch {} const selected=await selectHouseholdStorage(wanted); if(!selected)return send(res,200,JSON.stringify({cancelled:true}),MIME.json); return send(res,200,JSON.stringify({path:selected}),MIME.json,{'Cache-Control':'no-store'}); }
       catch(e){return send(res,e.statusCode||500,e.message);}
     }
     if (p === '/api/household/members' && method === 'GET') return send(res,200,JSON.stringify({members:household.users.map(safeUser)}),MIME.json);
     if (p === '/api/household/invitations' && method === 'POST') {
       if(user.role!=='admin') return send(res,403,'admin required');
       const code=b64(crypto.randomBytes(24)); household.invites.push({hash:hash(code),created:Date.now(),expires:Date.now()+5*60*1000,used:false}); await saveHouse();
-      return send(res,201,JSON.stringify({code,expires:Date.now()+5*60*1000}),MIME.json,{'Cache-Control':'no-store'});
+      return send(res,201,JSON.stringify({code,expires:Date.now()+5*60*1000,url:`${PROTO}://${inviteHost(req)}/?invite=${encodeURIComponent(code)}`}),MIME.json,{'Cache-Control':'no-store'});
     }
     if (p === '/api/household/invitation-qr' && method === 'GET') {
       if(user.role!=='admin') return send(res,403,'admin required');
       const code=url.searchParams.get('code')||'', invite=household.invites.find(x=>x.hash===hash(code)&&!x.used&&x.expires>Date.now());
       if(!invite) return send(res,400,'invitation invalid or expired');
-      const host=req.headers.host||`localhost:${PORT}`;
-      const joinUrl=`http://${host}/?invite=${encodeURIComponent(code)}`;
+      const joinUrl=`${PROTO}://${inviteHost(req)}/?invite=${encodeURIComponent(code)}`;
       const script=path.join(__dirname,'qr_svg.py');
       const env={...process.env,PYTHONPATH:path.join(__dirname,'vendor')};
       let result;
@@ -288,6 +295,18 @@ const MIME = {
 };
 const NAME = /^[a-z]_[a-z0-9]+\.[a-z0-9]{1,5}$/i;
 const lan = () => Object.values(os.networkInterfaces()).flat().filter(x => x && x.family === 'IPv4' && !x.internal).map(x => x.address);
+const isChromeOSLinux = process.platform === 'linux' && (fs.existsSync('/dev/.cros_milestone') || fs.existsSync('/etc/apt/sources.list.d/cros.list'));
+// The ChromeOS Linux container sits on an internal network (100.115.x.x / 100.114.x.x) that phones cannot reach.
+const lanReachable = () => lan().filter(a => !(isChromeOSLinux && /^100\.11[45]\./.test(a)));
+const PROTO = E.STASH_CERT && E.STASH_KEY ? 'https' : 'http';
+// Address phones should use in invitations. STASH_PUBLIC_HOST (e.g. 192.168.1.50:8787) overrides everything;
+// otherwise a localhost browser falls back to the PC's LAN address so the QR code works on phones.
+function inviteHost(req) {
+  if (E.STASH_PUBLIC_HOST) return E.STASH_PUBLIC_HOST;
+  const host = req.headers.host || `localhost:${PORT}`;
+  if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(host)) { const a = lanReachable()[0]; if (a) return `${a}:${PORT}`; }
+  return host;
+}
 const loopback = req => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
 const send = (res, code, body = '', type = 'text/plain; charset=utf-8', extra = {}) => {
   if (res.headersSent) return res.destroy();
@@ -480,7 +499,14 @@ server.listen(PORT, '0.0.0.0', () => {
   const proto = E.STASH_CERT && E.STASH_KEY ? 'https' : 'http';
   console.log(`\nBlocStash is running. Photos are stored in: ${DIR}\n`);
   console.log(`On this computer: ${proto}://localhost:${PORT}`);
-  lan().forEach(address => console.log(`On your phone: ${proto}://${address}:${PORT} (same Wi-Fi)`));
+  lanReachable().forEach(address => console.log(`On your phone: ${proto}://${address}:${PORT} (same Wi-Fi)`));
+  if (isChromeOSLinux) {
+    console.log('\nChromeOS Linux detected. Phones cannot reach this Linux container directly, so:');
+    console.log(`  1. Settings > Advanced > Developers > Linux > Port forwarding: add and turn on TCP port ${PORT}.`);
+    console.log("  2. Settings > Network > your Wi-Fi network: note the Chromebook's IP address.");
+    console.log(`  3. On your phone open ${proto}://<that IP address>:${PORT}`);
+    console.log(`  4. Optional: start with STASH_PUBLIC_HOST=<that IP address>:${PORT} so invitation QR codes use it.`);
+  }
   console.log(`\nOpen ${proto}://localhost:${PORT} on this computer. Create the household administrator account on first launch.`);
   console.log(`After setup, use Settings → Invite member to invite flatmates.\n`);
 });
