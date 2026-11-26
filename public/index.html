@@ -294,11 +294,30 @@ $("#sall").onclick=()=>{if(!sel)return;const all=view.length&&view.every(it=>sel
 document.addEventListener("keydown",e=>{if(!sel||$("#lb").classList.contains("open")||$("#dlg").classList.contains("open"))return;if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="a"){e.preventDefault();view.forEach(it=>sel.add(it.id));selectionAnchor=view[0]?.id||null;render()}if(e.key==="Escape"){sel=null;selectionAnchor=null;render()}});
 $("#sa").onclick=async()=>{const its=idx.items.filter(i=>sel.has(i.id));if(its.length&&await setAlbum(its)){sel=null;render()}};
 $("#sd").onclick=async()=>{const its=idx.items.filter(i=>sel.has(i.id));if(its.length&&await ask(`Move ${its.length} item${its.length>1?"s":""} to trash? You can restore them for 30 days.`)){sel=null;toast("Deleting…");await remove(its);toast("Deleted")}};
+async function remoteInfo(refresh){const r=await fetch("/api/household/remote"+(refresh?"?refresh=1":""),{credentials:"same-origin",cache:"no-store"});if(!r.ok)throw new Error("remote status failed");return r.json()}
+async function showRemote(){
+  let refresh=false;
+  for(;;){
+    let i;try{i=await remoteInfo(refresh)}catch(e){toast("Could not load remote access status");return}
+    const body=[];
+    if(i.ready){
+      body.push(el("p","","Remote access is ready. Members with the Tailscale app switched on can open BlocStash from home or away at:"));
+      for(const u of i.urls){const row=el("p","",u),b=el("button","link","Copy");b.style.marginLeft="8px";b.onclick=()=>navigator.clipboard?navigator.clipboard.writeText(u).then(()=>toast("Address copied")).catch(()=>toast("Copy unavailable")):toast("Copy unavailable");row.append(b);body.push(row)}
+      body.push(el("p","","Invitations use this address automatically, so new members can join from home or away. Home Wi-Fi sign-in keeps working too."));
+    }else{
+      body.push(el("p","","Remote access is not set up yet."));
+      body.push(el("p","","1) Install Tailscale (free) on this computer and sign in. 2) Install it on each phone and sign in. 3) Tap Check again. The README has the full steps."));
+    }
+    body.push(el("p","",`Sign-in protection is on: after ${i.protection.maxFails} wrong passwords, a device is blocked for ${i.protection.lockoutMinutes} minutes.`));
+    const c=await modal("Remote access",body,[["Close",null],["Check again","again"]]);
+    if(c!=="again")return;refresh=true;
+  }
+}
 $("#drv").onclick=async()=>{
   const actions=[["Close",null]];
   if(cfg.mode==="household"){
     actions.push(["Account & session settings","settings"],["Members","members"]);
-    if(cfg.user.role==="admin")actions.push(["Central storage folder","storage"],["Invite member","invite"]);
+    if(cfg.user.role==="admin")actions.push(["Central storage folder","storage"],["Remote access","remote"],["Invite member","invite"]);
     actions.push(["View trash","trash"],["Sign out","logout","danger"]);
   }else actions.push(["Account & session settings","settings"],["Choose a different folder","folder"],["Return to household login","household"],["Disconnect","logout","danger"]);
   const detail=cfg.mode==="household"?`Signed in as ${cfg.user.username} · ${cfg.user.role}`:(cfg.mode==="folder"?`Folder: ${root.name}`:cfg.url);
@@ -328,8 +347,10 @@ $("#drv").onclick=async()=>{
       }catch(e){toast("Could not load trash")}
     }
     await showTrash();
+  }else if(choice==="remote"){
+    await showRemote();
   }else if(choice==="invite"){
-    try{const r=await fetch("/api/household/invitations",{method:"POST",credentials:"same-origin"});if(!r.ok)throw 0;const d=await r.json();const link=d.url||(location.origin+"/?invite="+encodeURIComponent(d.code)),copy=el("button","link","Copy invitation link"),qr=el("img");qr.alt="QR code for one-time household invitation";qr.style.cssText="display:block;width:240px;height:240px;max-width:100%;margin:12px auto;background:white;padding:10px;border-radius:12px";qr.src="/api/household/invitation-qr?code="+encodeURIComponent(d.code);copy.onclick=()=>navigator.clipboard?navigator.clipboard.writeText(link).then(()=>toast("Invitation link copied")).catch(()=>toast("Copy unavailable; select the link manually")):toast("Copy unavailable; select the link manually");await modal("Household invitation",[qr,el("p","",link),el("p","","Admin-generated invitation. Expires in five minutes and can be used once. Only administrators can create invitations."),copy],[["Close",null]])}catch(e){toast("Could not create invitation")}
+    try{const r=await fetch("/api/household/invitations",{method:"POST",credentials:"same-origin"});if(!r.ok){toast((await r.text())||"Could not create invitation",6000);return}const d=await r.json();const link=d.url||(location.origin+"/?invite="+encodeURIComponent(d.code)),copy=el("button","link","Copy invitation link"),qr=el("img");qr.alt="QR code for one-time household invitation";qr.style.cssText="display:block;width:240px;height:240px;max-width:100%;margin:12px auto;background:white;padding:10px;border-radius:12px";qr.src="/api/household/invitation-qr?code="+encodeURIComponent(d.code);copy.onclick=()=>navigator.clipboard?navigator.clipboard.writeText(link).then(()=>toast("Invitation link copied")).catch(()=>toast("Copy unavailable; select the link manually")):toast("Copy unavailable; select the link manually");await modal("Household invitation",[qr,el("p","",link),el("p","","Admin-generated invitation. Expires in five minutes and can be used once. Only administrators can create invitations."),copy],[["Close",null]])}catch(e){toast("Could not create invitation")}
   }else if(choice==="logout"){if(cfg.mode==="household")await fetch("/api/auth/logout",{method:"POST",credentials:"same-origin"});LS.removeItem("stash.cfg");location.reload()}
 };
 // ---- upload (EXIF location/date, thumbnails, then PUT to the drive)
@@ -358,19 +379,24 @@ function updateUploadProgress(state){
 $("#uploadHide").onclick=()=>{uploadHidden=true;$("#uploadPanel").hidden=true;toast("Uploads continue. Tap Add to view progress.",3500)};
 $("#fab").onclick=()=>{if(uploadState&&!uploadState.finished&&uploadHidden){uploadHidden=false;$("#uploadPanel").hidden=false;return}$("#file").click()};
 let uploadState=null;
-async function findDuplicateByFilename(file){
+function findDuplicateByFilename(file){
+  // Same filename AND same size (older items without a stored size fall back to filename only).
   const key=file.name.trim().toLowerCase();
-  return idx.items.find(item=>typeof item.name==="string"&&item.name.trim().toLowerCase()===key)||null;
+  return idx.items.find(item=>typeof item.name==="string"&&item.name.trim().toLowerCase()===key&&(typeof item.size!=="number"||item.size===file.size))||null;
 }
 $("#file").addEventListener("change",async e=>{
   const picker=e.currentTarget,fs=Array.from(picker.files||[]);picker.value="";if(!fs.length)return;
   const totalBytes=fs.reduce((n,f)=>n+f.size,0);let next=0;
+  const wasIdle=!uploadState||uploadState.finished;
   uploadHidden=false;uploadState={total:fs.length,totalBytes,sentBytes:0,saved:0,failed:0,skipped:0,active:"Checking filenames…",finished:false};updateUploadProgress(uploadState);
   await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  // Refresh the index BEFORE comparing, so photos deleted on another device/tab are not treated as duplicates.
+  // Skipped while an earlier upload is still running (its new items are not saved yet).
+  if(wasIdle){try{uploadState.active="Refreshing your library…";updateUploadProgress(uploadState);await saveChain.catch(()=>{});await D.load();render()}catch(e){toast("Could not refresh library index for duplicate check",4000)}}
   const duplicates=[],seenSelected=new Map();
   // Yield to the event loop every 10 files so the browser can paint the progress bar.
   for(let i=0;i<fs.length;i++){
-    const file=fs[i],key=file.name.trim().toLowerCase();
+    const file=fs[i],key=file.name.trim().toLowerCase()+"|"+file.size;
     uploadState.active=`Checking filename ${i+1} of ${fs.length}: ${file.name}`;updateUploadProgress(uploadState);
     const prior=seenSelected.get(key)||findDuplicateByFilename(file);
     if(prior)duplicates.push({file,match:prior});else seenSelected.set(key,file);
@@ -378,10 +404,8 @@ $("#file").addEventListener("change",async e=>{
   }
   // Yield after the loop so the "all checked" status is painted.
   await Promise.resolve();
-  // Refresh index from server to avoid stale entries from incomplete uploads or other devices.
-  try{await D.load()}catch(e){toast("Could not refresh library index for duplicate check",4000)}
   let duplicateMode="keep";
-  if(duplicates.length){const body=[el("p","",`${duplicates.length} selected ${duplicates.length===1?"file is":"files are"} already in your library.`),el("p","","Choose whether to skip these files or upload another copy. This choice applies to all duplicates in this batch.")];const choice=await modal("Duplicates found",body,[["Cancel upload","cancel"],["Skip duplicates","skip"],["Keep both","keep"]]);if(choice==="cancel"||choice===null){uploadState.finished=true;uploadState.active="Upload cancelled";updateUploadProgress(uploadState);return}duplicateMode=choice}
+  if(duplicates.length){const body=[el("p","",`${duplicates.length} selected ${duplicates.length===1?"file is":"files are"} already in your library.`),el("p","",duplicates.slice(0,5).map(d=>d.file.name).join(", ")+(duplicates.length>5?` and ${duplicates.length-5} more`:"")),el("p","","Choose whether to skip these files or upload another copy. This choice applies to all duplicates in this batch.")];const choice=await modal("Duplicates found",body,[["Cancel upload","cancel"],["Skip duplicates","skip"],["Keep both","keep"]]);if(choice==="cancel"||choice===null){uploadState.finished=true;uploadState.active="Upload cancelled";updateUploadProgress(uploadState);return}duplicateMode=choice}
   const skipSet=new Set(duplicateMode==="skip"?duplicates.map(d=>d.file):[]);uploadState.skipped=skipSet.size;
   const queue=fs.filter(f=>!skipSet.has(f));if(!queue.length){uploadState.finished=true;uploadState.active="";updateUploadProgress(uploadState);toast(`${skipSet.size} duplicate${skipSet.size===1?"":"s"} skipped`);return}
   // Three concurrent workers keep mobile memory and network use bounded.

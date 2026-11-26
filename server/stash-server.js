@@ -10,7 +10,7 @@ const crypto = require('node:crypto');
 const os = require('node:os');
 const { Transform } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, execFile } = require('node:child_process');
 
 const E = process.env;
 const PORT = Number(E.PORT) || 8787;
@@ -121,6 +121,32 @@ function referencedNames(scope, userId) {
   const list = scope === 'shared' ? household.shared.items : (household.personal[userId] || {items:[]}).items;
   return new Set(list.flatMap(mediaNames));
 }
+// ---- Sign-in protection: lock a client out for a while after repeated failed sign-ins ----
+const AUTH_IP_MAX = Number(E.STASH_LOGIN_MAX_FAILS) > 0 ? Number(E.STASH_LOGIN_MAX_FAILS) : 5;   // failures per client address
+const AUTH_USER_MAX = AUTH_IP_MAX * 4;                                                          // failures per username (all clients)
+const AUTH_WINDOW_MS = 15 * 60 * 1000, AUTH_LOCK_MS = 15 * 60 * 1000;
+const authFails = new Map();
+function clientIp(req) {
+  // Behind a local proxy (e.g. `tailscale serve`) every request arrives from 127.0.0.1; trust X-Forwarded-For only then.
+  if (loopback(req)) { const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim(); if (xff) return xff; }
+  return String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+}
+const authKeys = (req, username) => [['ip:' + clientIp(req), AUTH_IP_MAX], ['user:' + String(username || '').toLowerCase().slice(0, 64), AUTH_USER_MAX]];
+function authLockedSeconds(keys) {
+  const now = Date.now(); let wait = 0;
+  for (const [k] of keys) { const e = authFails.get(k); if (e && e.lockedUntil > now) wait = Math.max(wait, Math.ceil((e.lockedUntil - now) / 1000)); }
+  return wait;
+}
+function authRecordFailure(keys) {
+  const now = Date.now();
+  if (authFails.size > 2000) for (const [k, e] of authFails) if (e.lockedUntil < now && now - e.first > AUTH_WINDOW_MS) authFails.delete(k);
+  for (const [k, max] of keys) {
+    let e = authFails.get(k); if (!e || (e.lockedUntil < now && now - e.first > AUTH_WINDOW_MS)) e = { n: 0, first: now, lockedUntil: 0 };
+    e.n++; if (e.n >= max) { e.lockedUntil = now + AUTH_LOCK_MS; e.n = 0; e.first = now; }
+    authFails.set(k, e);
+  }
+}
+const tooManyAttempts = (res, secs) => send(res, 429, `Too many failed attempts. Try again in ${Math.max(1, Math.ceil(secs / 60))} minute${secs > 90 ? 's' : ''}.`, 'text/plain; charset=utf-8', { 'Retry-After': String(secs) });
 async function householdApi(req,res,url) {
   const p=url.pathname, method=req.method;
   if (p === '/api/auth/status' && method === 'GET') return send(res,200,JSON.stringify({setup:household.users.length===0}),MIME.json,{'Cache-Control':'no-store'});
@@ -138,8 +164,10 @@ async function householdApi(req,res,url) {
   }
   if (p === '/api/auth/login' && method === 'POST') {
     const body=JSON.parse((await readBody(req,8192)).toString('utf8'));
+    const guard=authKeys(req,body.username), locked=authLockedSeconds(guard); if(locked) return tooManyAttempts(res,locked);
     const user=household.users.find(x=>x.username.toLowerCase()===String(body.username||'').toLowerCase() && !x.disabled);
-    if (!user || !(await passwordOK(String(body.password||''),user))) return send(res,401,'invalid username or password');
+    if (!user || !(await passwordOK(String(body.password||''),user))) { authRecordFailure(guard); return send(res,401,'invalid username or password'); }
+    authFails.delete(guard[1][0]);
     const token=b64(crypto.randomBytes(32)),days=rememberSeconds(body.rememberDays); household.sessions=household.sessions.filter(x=>x.expires>Date.now()); household.sessions.push({hash:hash(token),userId:user.id,created:Date.now(),expires:Date.now()+days*1000});
     await saveHouse(); cookie(res,token,days); return send(res,200,JSON.stringify({user:safeUser(user)}),MIME.json,{'Cache-Control':'no-store'});
   }
@@ -159,17 +187,26 @@ async function householdApi(req,res,url) {
       try { let wanted=''; try { wanted=JSON.parse((await readBody(req,8192)).toString('utf8')||'{}').path||''; } catch {} const selected=await selectHouseholdStorage(wanted); if(!selected)return send(res,200,JSON.stringify({cancelled:true}),MIME.json); return send(res,200,JSON.stringify({path:selected}),MIME.json,{'Cache-Control':'no-store'}); }
       catch(e){return send(res,e.statusCode||500,e.message);}
     }
+    if (p === '/api/household/remote' && method === 'GET') {
+      if(user.role!=='admin') return send(res,403,'admin required');
+      const ts=await tailscaleInfo(url.searchParams.get('refresh')==='1');
+      const urls=[...(E.STASH_PUBLIC_URL?[String(E.STASH_PUBLIC_URL)]:[]),...(E.STASH_PUBLIC_HOST?[`${PROTO}://${E.STASH_PUBLIC_HOST}`]:[]),...ts.addresses.map(a=>`${PROTO}://${a}:${PORT}`),...(ts.dnsName?[`${PROTO}://${ts.dnsName}:${PORT}`]:[])];
+      return send(res,200,JSON.stringify({ready:urls.length>0,urls,tailscale:{detected:ts.addresses.length>0,addresses:ts.addresses,dnsName:ts.dnsName},publicUrl:E.STASH_PUBLIC_URL||'',publicHost:E.STASH_PUBLIC_HOST||'',
+        protection:{maxFails:AUTH_IP_MAX,windowMinutes:AUTH_WINDOW_MS/60000,lockoutMinutes:AUTH_LOCK_MS/60000}}),MIME.json,{'Cache-Control':'no-store'});
+    }
     if (p === '/api/household/members' && method === 'GET') return send(res,200,JSON.stringify({members:household.users.map(safeUser)}),MIME.json);
     if (p === '/api/household/invitations' && method === 'POST') {
       if(user.role!=='admin') return send(res,403,'admin required');
+      const base=await inviteBase(req);
       const code=b64(crypto.randomBytes(24)); household.invites.push({hash:hash(code),created:Date.now(),expires:Date.now()+5*60*1000,used:false}); await saveHouse();
-      return send(res,201,JSON.stringify({code,expires:Date.now()+5*60*1000,url:`${PROTO}://${inviteHost(req)}/?invite=${encodeURIComponent(code)}`}),MIME.json,{'Cache-Control':'no-store'});
+      return send(res,201,JSON.stringify({code,expires:Date.now()+5*60*1000,url:`${base}/?invite=${encodeURIComponent(code)}`}),MIME.json,{'Cache-Control':'no-store'});
     }
     if (p === '/api/household/invitation-qr' && method === 'GET') {
       if(user.role!=='admin') return send(res,403,'admin required');
       const code=url.searchParams.get('code')||'', invite=household.invites.find(x=>x.hash===hash(code)&&!x.used&&x.expires>Date.now());
       if(!invite) return send(res,400,'invitation invalid or expired');
-      const joinUrl=`${PROTO}://${inviteHost(req)}/?invite=${encodeURIComponent(code)}`;
+      const base=await inviteBase(req);
+      const joinUrl=`${base}/?invite=${encodeURIComponent(code)}`;
       const script=path.join(__dirname,'qr_svg.py');
       const env={...process.env,PYTHONPATH:path.join(__dirname,'vendor')};
       let result;
@@ -180,7 +217,8 @@ async function householdApi(req,res,url) {
     }
     if (p === '/api/household/join' && method === 'POST') {
       const body=JSON.parse((await readBody(req,8192)).toString('utf8')), invite=household.invites.find(x=>x.hash===hash(body.code||'')&&!x.used&&x.expires>Date.now());
-      if(!invite) return send(res,400,'invitation is invalid or expired');
+      const guard=authKeys(req,''), locked=authLockedSeconds([guard[0]]); if(locked) return tooManyAttempts(res,locked);
+      if(!invite) { authRecordFailure([guard[0]]); return send(res,400,'invitation is invalid or expired'); }
       if(!/^[a-zA-Z0-9_.-]{3,32}$/.test(body.username||'')||typeof body.password!=='string'||body.password.length<12||household.users.some(x=>x.username.toLowerCase()===body.username.toLowerCase())) return send(res,400,'invalid or already-used username, or password too short');
       const pw=await passwordHash(body.password), member={id:newId(),username:body.username,role:'member',created:Date.now(),salt:pw.salt,passwordHash:pw.hash};
       invite.used=true; household.users.push(member); await saveHouse(); const token=b64(crypto.randomBytes(32)),days=rememberSeconds(body.rememberDays); household.sessions.push({hash:hash(token),userId:member.id,created:Date.now(),expires:Date.now()+days*1000}); await saveHouse(); cookie(res,token,days);
@@ -203,6 +241,9 @@ async function householdApi(req,res,url) {
         if(lib==='shared' && prior && prior.ownerId!==user.id && user.role!=='admin') return send(res,403,'cannot edit another member\'s shared item');
         if(lib==='shared') item.ownerId=prior?.ownerId||user.id;
       }
+      // A device with an out-of-date copy of the library must not bring deleted (trashed) items back.
+      const trashedIds=new Set(household.trash.filter(t=>t.scope===lib&&(lib==='shared'||t.userId===user.id)&&t.item&&t.item.id).map(t=>t.item.id));
+      if(trashedIds.size) body.items=body.items.filter(x=>!trashedIds.has(x&&x.id));
       const nextIds=new Set(body.items.map(x=>x.id));
       for(const prior of old.items) if(!nextIds.has(prior.id) && lib==='shared' && prior.ownerId!==user.id && user.role!=='admin') return send(res,403,'cannot remove another member\'s shared item');
       if(lib==='shared') household.shared={items:body.items}; else household.personal[user.id]={items:body.items};
@@ -297,7 +338,37 @@ const NAME = /^[a-z]_[a-z0-9]+\.[a-z0-9]{1,5}$/i;
 const lan = () => Object.values(os.networkInterfaces()).flat().filter(x => x && x.family === 'IPv4' && !x.internal).map(x => x.address);
 const isChromeOSLinux = process.platform === 'linux' && (fs.existsSync('/dev/.cros_milestone') || fs.existsSync('/etc/apt/sources.list.d/cros.list'));
 // The ChromeOS Linux container sits on an internal network (100.115.x.x / 100.114.x.x) that phones cannot reach.
-const lanReachable = () => lan().filter(a => !(isChromeOSLinux && /^100\.11[45]\./.test(a)));
+// ---- Optional remote access over Tailscale (https://tailscale.com) ----
+const isCgnat = a => { const p = String(a).split('.').map(Number); return p[0] === 100 && p[1] >= 64 && p[1] <= 127; };
+// IPv4 addresses on a Tailscale interface (Linux "tailscale0", Windows "Tailscale", macOS "utunN").
+function tsInterfaceAddrs() {
+  const out = [];
+  for (const [name, list] of Object.entries(os.networkInterfaces())) for (const i of list || []) {
+    if (!i || i.family !== 'IPv4' || i.internal || !isCgnat(i.address)) continue;
+    if (isChromeOSLinux && /^100\.11[45]\./.test(i.address)) continue;   // ChromeOS Linux container network, not Tailscale
+    if (/tailscale/i.test(name) || /^utun\d+$/.test(name)) out.push(i.address);
+  }
+  return out;
+}
+// Home network addresses only: no ChromeOS container address, no Tailscale address.
+const lanReachable = () => { const ts = new Set(tsInterfaceAddrs()); return lan().filter(a => !ts.has(a) && !(isChromeOSLinux && /^100\.11[45]\./.test(a))); };
+let tsCache = { at: 0, value: null };
+async function tailscaleInfo(force = false) {
+  if (!force && tsCache.value && Date.now() - tsCache.at < 30000) return tsCache.value;
+  const addresses = tsInterfaceAddrs();
+  let dnsName = '';
+  if (addresses.length) {
+    const bins = process.platform === 'darwin' ? ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'] : ['tailscale'];
+    for (const bin of bins) {
+      dnsName = await new Promise(resolve => execFile(bin, ['status', '--json'], { timeout: 3000, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, out) => {
+        try { resolve(err ? '' : String(JSON.parse(out).Self.DNSName || '').replace(/\.$/, '')); } catch { resolve(''); }
+      }));
+      if (dnsName) break;
+    }
+  }
+  tsCache = { at: Date.now(), value: { addresses, dnsName } };
+  return tsCache.value;
+}
 const PROTO = E.STASH_CERT && E.STASH_KEY ? 'https' : 'http';
 // Address phones should use in invitations. STASH_PUBLIC_HOST (e.g. 192.168.1.50:8787) overrides everything;
 // otherwise a localhost browser falls back to the PC's LAN address so the QR code works on phones.
@@ -306,6 +377,19 @@ function inviteHost(req) {
   const host = req.headers.host || `localhost:${PORT}`;
   if (/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(host)) { const a = lanReachable()[0]; if (a) return `${a}:${PORT}`; }
   return host;
+}
+// Full base URL (scheme + host) that an invited person should use. One address for everyone, at home and away:
+// STASH_PUBLIC_URL, else a Tailscale HTTPS address they browsed to, else STASH_PUBLIC_HOST or this PC's Tailscale
+// address when remote access is set up, else the home network address.
+async function inviteBase(req) {
+  if (E.STASH_PUBLIC_URL) return String(E.STASH_PUBLIC_URL).replace(/\/+$/, '');
+  const host = req.headers.host || '';
+  // Behind a local HTTPS proxy such as `tailscale serve`, the browser address is https even though this server sees http.
+  if (loopback(req) && /\.ts\.net(:\d+)?$/i.test(host)) return `https://${host}`;
+  if (E.STASH_PUBLIC_HOST) return `${PROTO}://${E.STASH_PUBLIC_HOST}`;
+  const ts = await tailscaleInfo();
+  if (ts.addresses.length) return `${PROTO}://${ts.addresses[0]}:${PORT}`;
+  return `${PROTO}://${inviteHost(req)}`;
 }
 const loopback = req => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
 const send = (res, code, body = '', type = 'text/plain; charset=utf-8', extra = {}) => {
@@ -495,11 +579,14 @@ async function run(req, res) {
 }
 server.requestTimeout = 30 * 60 * 1000;
 server.headersTimeout = 60 * 1000;
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', async () => {
   const proto = E.STASH_CERT && E.STASH_KEY ? 'https' : 'http';
   console.log(`\nBlocStash is running. Photos are stored in: ${DIR}\n`);
   console.log(`On this computer: ${proto}://localhost:${PORT}`);
   lanReachable().forEach(address => console.log(`On your phone: ${proto}://${address}:${PORT} (same Wi-Fi)`));
+  const ts = await tailscaleInfo();
+  if (ts.addresses.length) console.log(`From anywhere (Tailscale): ${proto}://${ts.addresses[0]}:${PORT}${ts.dnsName ? `  or  ${proto}://${ts.dnsName}:${PORT}` : ''}  (the phone needs the Tailscale app)`);
+  else console.log('Away from home: install Tailscale on this computer for free remote access (see README, "Access from anywhere").');
   if (isChromeOSLinux) {
     console.log('\nChromeOS Linux detected. Phones cannot reach this Linux container directly, so:');
     console.log(`  1. Settings > Advanced > Developers > Linux > Port forwarding: add and turn on TCP port ${PORT}.`);

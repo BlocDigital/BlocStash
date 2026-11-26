@@ -67,6 +67,8 @@ Only the administrator can invite people, and registration is invite-only.
 
 Invitations expire after **five minutes** and work **once**. If it has expired, just create a new one.
 
+Want to connect from outside your home? See [Access from anywhere](#access-from-anywhere-free-with-tailscale).
+
 ### Auto-start with Windows (optional)
 
 So you don't have to double-click `start-blocstash.bat` after every reboot, you can have Windows start the server automatically.
@@ -146,6 +148,72 @@ Good to know:
 - The address shown by the server for the Linux container (`100.115.x.x`) is internal and is hidden for ChromeOS. Use the Chromebook's Wi-Fi address from step 5.
 - Your Wi-Fi address can change after a reboot. Check *Settings → Network* again, or reserve a fixed address for the Chromebook in your router.
 - Chromebook storage is often small. Use **Central storage folder** (below) to keep media on an external drive or SD card.
+## Access from anywhere (free, with Tailscale)
+
+By default BlocStash only works on your home Wi-Fi. To use it away from home, BlocStash supports [Tailscale](https://tailscale.com/), a free private network (VPN) for your own devices. Your computer and your phones join the same private network, so they can reach each other from anywhere, encrypted, **without opening any port on your router** and without putting BlocStash on the public internet.
+
+**Cost:** Tailscale's Personal plan is free. At the time of writing it allows up to 6 users and unlimited devices, and it is meant for non-commercial use such as a household photo library. Check [tailscale.com/pricing](https://tailscale.com/pricing) for the current terms.
+
+### 1. Set up Tailscale
+
+1. Create a free account at [login.tailscale.com](https://login.tailscale.com/start) (you can sign in with Google, Microsoft, Apple or GitHub).
+2. Install Tailscale on **the computer that runs BlocStash** ([download](https://tailscale.com/download)), sign in, and leave it running.
+3. Install Tailscale on each phone, tablet or Chromebook that will connect (App Store or Google Play), and sign in to the same account.
+
+### 2. Start BlocStash
+
+Start the server as usual. If Tailscale is running, the terminal shows an extra line with the remote address:
+
+```text
+From anywhere (Tailscale): http://100.x.y.z:8787  or  http://your-pc.your-network.ts.net:8787
+```
+
+The administrator can also see it in the app: **Settings → Remote access**. Tap **Check again** if you installed Tailscale after starting BlocStash.
+
+<img src="docs/screenshots/07-remote-access-button.png" alt="Settings dialog with an arrow pointing to the Remote access button" width="720">
+
+<img src="docs/screenshots/08-remote-access-address.png" alt="Remote access dialog with an arrow pointing to the addresses that work at home and away" width="720">
+
+*(The addresses in the screenshots are examples. Yours will be different.)*
+
+### 3. Connect your own phone
+
+With Tailscale switched on in the phone, open the address from the terminal (or the Remote access dialog) in the phone's browser and sign in. The same address works at home and away, and it does not change when your router hands out new Wi-Fi addresses.
+
+### 4. Invite members
+
+Every member uses the same address, so it works at home and away at the same time. Each person needs the Tailscale app on their phone (switched on) and access to your Tailscale network. Either:
+
+- **add them to your Tailscale network** from the Tailscale admin console (this counts towards the free plan's user limit), or
+- **let them keep their own free Tailscale account** and *share this computer* with them from the Tailscale admin console (open the computer's menu and choose Share). They only get access to that one computer.
+
+Then in BlocStash choose **Settings → Invite member** and send the QR code or link. When remote access is set up, invitations automatically use your Tailscale address, so the same invitation works at home and away. As before, an invitation works once and expires after five minutes.
+
+<img src="docs/screenshots/09-invite-remote.png" alt="Invitation dialog with arrows pointing to the QR code and the Tailscale address in the link" width="720">
+
+At home, members can also keep signing in with the home Wi-Fi address from the terminal if their Tailscale app is off. Invitations created before Tailscale was set up use the Wi-Fi address and only work on your home network.
+
+### Optional: an HTTPS address
+
+Tailscale can put an HTTPS address in front of BlocStash, still private to your Tailscale network. Turn on **HTTPS Certificates** in the Tailscale admin console (DNS page), then run this on the BlocStash computer:
+
+```bash
+tailscale serve --bg 8787
+```
+
+It prints an address like `https://your-pc.your-network.ts.net`. BlocStash recognises it, and invitations created while you browse through it use `https://`. To make invitations use it as well, start BlocStash with `STASH_PUBLIC_URL=https://your-pc.your-network.ts.net`. Do **not** use `tailscale funnel`, which publishes the address on the public internet.
+
+### Sign-in protection
+
+BlocStash now limits password guessing: after **5** wrong passwords from the same device, that device is blocked for **15 minutes**. There is also a looser limit per username. This applies at home and away. To change the number of attempts, start the server with `STASH_LOGIN_MAX_FAILS=<number>`.
+
+### Troubleshooting remote access
+
+- **"Remote access is not set up on this computer":** Tailscale is not installed or not signed in on the BlocStash computer. Fix that, then open **Settings → Remote access** and tap **Check again**.
+- **The phone cannot connect when away:** check that Tailscale shows *Connected* on the phone, that the BlocStash computer is awake (turn off sleep) with BlocStash running, and that the person has access to your Tailscale network or the shared computer. Try the numeric address if the name does not work.
+- **Works on Wi-Fi but not through Tailscale (Windows):** Windows Firewall may treat the Tailscale network as *Public*. In *Windows Security → Firewall & network protection → Allow an app through firewall*, tick **Public** as well for **Node.js JavaScript Runtime**. Only devices on your Tailscale network can reach that connection.
+- **Running the server on a Chromebook:** remote access depends on Tailscale working inside the Chromebook's Linux environment, which can vary by device. This has not been tested there; running the server on a Windows PC is the safest choice.
+
 ## Libraries and permissions
 
 - **Personal:** each member can view and manage their own private library. The household administrator cannot read another member's private library.
@@ -193,7 +261,8 @@ Trash is automatically purged after 30 days. Keep independent backups if you nee
 ## Local network and security
 
 - The default local server uses HTTP. Traffic is not encrypted on the LAN; use a trusted private Wi-Fi network.
-- Do not expose port 8787 directly to the public internet.
+- Do not expose port 8787 directly to the public internet (no router port forwarding, no `tailscale funnel`). For access away from home, use the private Tailscale route described in [Access from anywhere](#access-from-anywhere-free-with-tailscale).
+- Repeated wrong passwords are rate limited (5 attempts, then a 15 minute block per device).
 - Passwords are stored as salted scrypt hashes. Session tokens are random and only their SHA-256 hashes are stored on the server. The browser receives an HttpOnly, SameSite=Strict session cookie.
 - Core app, login, upload and browsing work locally. The map and EXIF helper currently use external libraries/tiles and may need internet access.
 - Household metadata is currently stored in an atomic JSON database (`household.json`) to keep this build dependency-free. SQLite migration is a later hardening step; do not treat this first household build as a substitute for independent backups.
@@ -213,7 +282,7 @@ On ChromeOS, folders and drives are only visible to Linux after you share them: 
 - Invitations are one-use and expire after five minutes.
 - The administrator's **Settings** menu has **Invite member**. It displays a real QR code and a copyable invite URL.
 - QR images are generated locally by a bundled pure-Python QR generator; no third-party CDN is required. Python 3 must be available (`py -3` or `python` on Windows; `python3` on Linux/macOS). If Python is unavailable, the copyable invite URL remains available.
-- The QR code encodes the invite URL using the local server's host address. The invited phone must be on the same Wi-Fi/LAN.
+- The QR code encodes the invite URL using the local server's host address, so the invited phone must be on the same Wi-Fi/LAN. Once Tailscale is set up, it encodes your Tailscale address instead, so members can join from home or away (they need the Tailscale app; see [Access from anywhere](#access-from-anywhere-free-with-tailscale)).
 - The QR image endpoint requires an authenticated administrator and checks that the invitation is still valid.
 
 ## Login, settings and local folders
