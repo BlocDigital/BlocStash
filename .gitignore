@@ -78,3 +78,6 @@ Desktop.ini
 .idea/
 *.swp
 *.swo
+
+# Architecture index for AI coding agent directions
+ARCHITECTURE_INDEX.md
