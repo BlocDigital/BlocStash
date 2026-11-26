@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Explicitly mark HTML as text so line endings are normalized on checkout
+*.html text
