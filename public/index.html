@@ -368,12 +368,16 @@ $("#file").addEventListener("change",async e=>{
   uploadHidden=false;uploadState={total:fs.length,totalBytes,sentBytes:0,saved:0,failed:0,skipped:0,active:"Checking filenames…",finished:false};updateUploadProgress(uploadState);
   await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
   const duplicates=[],seenSelected=new Map();
+  // Yield to the event loop every 10 files so the browser can paint the progress bar.
   for(let i=0;i<fs.length;i++){
     const file=fs[i],key=file.name.trim().toLocaleLowerCase();
     uploadState.active=`Checking filename ${i+1} of ${fs.length}: ${file.name}`;updateUploadProgress(uploadState);
     const prior=seenSelected.get(key)||findDuplicateByFilename(file);
     if(prior)duplicates.push({file,match:prior});else seenSelected.set(key,file);
+    if((i+1)%10===0)await Promise.resolve();
   }
+  // Yield after the loop so the "all checked" status is painted.
+  await Promise.resolve();
   let duplicateMode="keep";
   if(duplicates.length){const body=[el("p","",`${duplicates.length} selected ${duplicates.length===1?"file is":"files are"} already in your library.`),el("p","","Choose whether to skip these files or upload another copy. This choice applies to all duplicates in this batch.")];const choice=await modal("Duplicates found",body,[["Cancel upload","cancel"],["Skip duplicates","skip"],["Keep both","keep"]]);if(choice==="cancel"||choice===null){uploadState.finished=true;uploadState.active="Upload cancelled";updateUploadProgress(uploadState);return}duplicateMode=choice}
   const skipSet=new Set(duplicateMode==="skip"?duplicates.map(d=>d.file):[]);uploadState.skipped=skipSet.size;
