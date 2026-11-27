@@ -67,6 +67,8 @@ Only the administrator can invite people, and registration is invite-only.
 
 Invitations expire after **five minutes** and work **once**. If it has expired, just create a new one.
 
+> **iPhone/iPad users uploading large batches:** In the iOS Photos picker, tap the three dots at the bottom-left → **Options** → under **Format**, choose **Current**. This is the fastest option we have observed. **Automatic** and **Most Compatible** may take much longer or fail when selecting more than around 50–60 photos/videos on some devices.
+
 Want to connect from outside your home? See [Access from anywhere](#access-from-anywhere-free-with-tailscale).
 
 ### Auto-start with Windows (optional)
