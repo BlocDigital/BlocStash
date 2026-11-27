@@ -579,8 +579,43 @@ async function run(req, res) {
 }
 server.requestTimeout = 30 * 60 * 1000;
 server.headersTimeout = 60 * 1000;
+// ---- Big "keep this window open" warning shown at startup ----
+const BIG_FONT = {
+  D: ['####.', '#...#', '#...#', '#...#', '####.'], O: ['.###.', '#...#', '#...#', '#...#', '.###.'],
+  N: ['#...#', '##..#', '#.#.#', '#..##', '#...#'], T: ['#####', '..#..', '..#..', '..#..', '..#..'],
+  C: ['.####', '#....', '#....', '#....', '.####'], L: ['#....', '#....', '#....', '#....', '#####'],
+  S: ['.####', '#....', '.###.', '....#', '####.'], E: ['#####', '#....', '####.', '#....', '#####'],
+  B: ['####.', '#...#', '####.', '#...#', '####.'], A: ['.###.', '#...#', '#####', '#...#', '#...#'],
+  H: ['#...#', '#...#', '#####', '#...#', '#...#'], R: ['####.', '#...#', '####.', '#..#.', '#...#'],
+  V: ['#...#', '#...#', '#...#', '.#.#.', '..#..']
+};
+function bigText(word) {
+  const rows = ['', '', '', '', ''];
+  for (const ch of word) for (let r = 0; r < 5; r++) rows[r] += ch === ' ' ? '   ' : BIG_FONT[ch][r].replace(/\./g, ' ') + ' ';
+  return rows.map(x => x.trimEnd());
+}
+function titleBanner() {
+  const color = process.stdout.isTTY && !process.env.NO_COLOR, cyan = x => color ? `\x1b[1;36m${x}\x1b[0m` : x;
+  return ['', ...bigText('BLOCSTASH').map(x => cyan('  ' + x)), '', ...bigText('SERVER').map(x => cyan('  ' + x))].join('\n');
+}
+function keepOpenWarning() {
+  const color = process.stdout.isTTY && !process.env.NO_COLOR;
+  const red = x => color ? `\x1b[1;31m${x}\x1b[0m` : x, yellow = x => color ? `\x1b[1;33m${x}\x1b[0m` : x;
+  const bar = '='.repeat(66);
+  return ['', red(bar), '', ...bigText('DO NOT').map(x => red('   ' + x)), '', ...bigText('CLOSE').map(x => red('   ' + x)), '', red(bar),
+    yellow(' KEEP THIS WINDOW OPEN WHILE YOU USE BLOCSTASH'),
+    ' Closing it shuts down the server. While it is closed:',
+    '   * nobody can upload photos or videos',
+    '   * nobody can browse the galleries (at home or away)',
+    ' Minimise this window instead of closing it.',
+    ' To stop BlocStash on purpose, press Ctrl+C.',
+    red(bar), ''].join('\n');
+}
+process.title = 'BlocStash server - DO NOT CLOSE THIS WINDOW';
+
 server.listen(PORT, '0.0.0.0', async () => {
   const proto = E.STASH_CERT && E.STASH_KEY ? 'https' : 'http';
+  console.log(titleBanner());
   console.log(`\nBlocStash is running. Photos are stored in: ${DIR}\n`);
   console.log(`On this computer: ${proto}://localhost:${PORT}`);
   lanReachable().forEach(address => console.log(`On your phone: ${proto}://${address}:${PORT} (same Wi-Fi)`));
@@ -595,5 +630,6 @@ server.listen(PORT, '0.0.0.0', async () => {
     console.log(`  4. Optional: start with STASH_PUBLIC_HOST=<that IP address>:${PORT} so invitation QR codes use it.`);
   }
   console.log(`\nOpen ${proto}://localhost:${PORT} on this computer. Create the household administrator account on first launch.`);
-  console.log(`After setup, use Settings → Invite member to invite flatmates.\n`);
+  console.log(`After setup, use Settings → Invite member to invite flatmates.`);
+  console.log(keepOpenWarning());
 });
