@@ -594,34 +594,34 @@ function bigText(word) {
   for (const ch of word) for (let r = 0; r < 5; r++) rows[r] += ch === ' ' ? '   ' : BIG_FONT[ch][r].replace(/\./g, ' ') + ' ';
   return rows.map(x => x.trimEnd());
 }
+// Compact on purpose: the whole startup screen must fit the default console window (about 30 rows x 120 columns).
 function titleBanner() {
   const color = process.stdout.isTTY && !process.env.NO_COLOR, cyan = x => color ? `\x1b[1;36m${x}\x1b[0m` : x;
-  return ['', ...bigText('BLOCSTASH').map(x => cyan('  ' + x)), '', ...bigText('SERVER').map(x => cyan('  ' + x))].join('\n');
+  const wide = !process.stdout.columns || process.stdout.columns >= 100;     // one 93-column line, or two lines for narrow consoles
+  const rows = (wide ? [bigText('BLOCSTASH SERVER')] : [bigText('BLOCSTASH'), bigText('SERVER')]).flatMap((r, i) => i ? ['', ...r] : r);
+  return [...rows.map(x => cyan('  ' + x)), ''].join('\n');
 }
 function keepOpenWarning() {
   const color = process.stdout.isTTY && !process.env.NO_COLOR;
   const red = x => color ? `\x1b[1;31m${x}\x1b[0m` : x, yellow = x => color ? `\x1b[1;33m${x}\x1b[0m` : x;
-  const bar = '='.repeat(66);
-  return ['', red(bar), '', ...bigText('DO NOT').map(x => red('   ' + x)), '', ...bigText('CLOSE').map(x => red('   ' + x)), '', red(bar),
+  const bar = '='.repeat(72);
+  return ['', red(bar), ...bigText('DO NOT CLOSE').map(x => red('  ' + x)),
     yellow(' KEEP THIS WINDOW OPEN WHILE YOU USE BLOCSTASH'),
-    ' Closing it shuts down the server. While it is closed:',
-    '   * nobody can upload photos or videos',
-    '   * nobody can browse the galleries (at home or away)',
-    ' Minimise this window instead of closing it.',
-    ' To stop BlocStash on purpose, press Ctrl+C.',
-    red(bar), ''].join('\n');
+    ' Closing it stops the server. Uploads and gallery browsing need it running.',
+    ' Minimise it instead. To stop on purpose, press Ctrl+C.',
+    red(bar)].join('\n');
 }
 process.title = 'BlocStash server - DO NOT CLOSE THIS WINDOW';
 
 server.listen(PORT, '0.0.0.0', async () => {
   const proto = E.STASH_CERT && E.STASH_KEY ? 'https' : 'http';
   console.log(titleBanner());
-  console.log(`\nBlocStash is running. Photos are stored in: ${DIR}\n`);
+  console.log(`BlocStash is running. Photos are stored in: ${DIR}`);
   console.log(`On this computer: ${proto}://localhost:${PORT}`);
   lanReachable().forEach(address => console.log(`On your phone: ${proto}://${address}:${PORT} (same Wi-Fi)`));
   const ts = await tailscaleInfo();
-  if (ts.addresses.length) console.log(`From anywhere (Tailscale): ${proto}://${ts.addresses[0]}:${PORT}${ts.dnsName ? `  or  ${proto}://${ts.dnsName}:${PORT}` : ''}  (the phone needs the Tailscale app)`);
-  else console.log('Away from home: install Tailscale on this computer for free remote access (see README, "Access from anywhere").');
+  if (ts.addresses.length) console.log(`Remote (Tailscale): ${proto}://${ts.addresses[0]}:${PORT}${ts.dnsName ? `  or  ${proto}://${ts.dnsName}:${PORT}` : ''}`);
+  else console.log('Remote access: install Tailscale on this computer (see README).');
   if (isChromeOSLinux) {
     console.log('\nChromeOS Linux detected. Phones cannot reach this Linux container directly, so:');
     console.log(`  1. Settings > Advanced > Developers > Linux > Port forwarding: add and turn on TCP port ${PORT}.`);

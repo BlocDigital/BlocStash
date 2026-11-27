@@ -18,8 +18,13 @@ You need a Windows PC to act as the server (using a Chromebook or Linux machine 
 
 - **(1) `On this computer`** – open this address in a browser on the PC.
 - **(2) `On your phone`** – the PC's address on your home network. Phones and other computers use this one.
+- **(3) `Remote (Tailscale)`** – only appears when Tailscale is running on this computer. This one address works at home **and** away, so members use it everywhere (see [Access from anywhere](#access-from-anywhere-free-with-tailscale)). If you have not set up Tailscale, the line just says how to.
 
-Keep the terminal window open while you use BlocStash. Closing it stops the server.
+> ### ⚠️ DO NOT CLOSE THE TERMINAL WINDOW
+>
+> **Closing it shuts down the BlocStash server.** While the server is stopped, **nobody can upload photos or videos and nobody can browse the galleries**, at home or away. The window prints a big red warning to remind you.
+>
+> Minimise the window instead of closing it. To stop BlocStash on purpose, press `Ctrl+C`. To start it again, double-click `start-blocstash.bat`.
 
 > **Windows Firewall:** the first time you start the server, Windows asks whether to allow Node.js. Tick **Private networks** and choose **Allow access**. If you missed the prompt, open *Windows Security → Firewall & network protection → Allow an app through firewall* and enable **Node.js JavaScript Runtime** for **Private**.
 >
@@ -66,8 +71,6 @@ Only the administrator can invite people, and registration is invite-only.
 <img src="docs/screenshots/06-phone-join.png" alt="Phone join page opened from the QR code" width="280">
 
 Invitations expire after **five minutes** and work **once**. If it has expired, just create a new one.
-
-> **iPhone/iPad users uploading large batches:** In the iOS Photos picker, tap the three dots at the bottom-left → **Options** → under **Format**, choose **Current**. This is the fastest option we have observed. **Automatic** and **Most Compatible** may take much longer or fail when selecting more than around 50–60 photos/videos on some devices.
 
 Want to connect from outside your home? See [Access from anywhere](#access-from-anywhere-free-with-tailscale).
 
