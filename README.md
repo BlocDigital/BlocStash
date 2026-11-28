@@ -11,8 +11,8 @@ You need a Windows PC to act as the server (using a Chromebook or Linux machine 
 ### 1. Start the server
 
 1. Install [Node.js](https://nodejs.org/) 18 or newer. (Optional but recommended: install [Python 3](https://www.python.org/downloads/) so the invitation QR code can be drawn. During setup, tick **Add python.exe to PATH**. Without Python you can still share the invitation link.)
-2. Extract this project([Release1.0](https://github.com/BlocDigital/BlocStash/releases/tag/v1.0)) to a permanent folder, for example `C:\Users\<you>\BlocStash`.
-3. Double-click **`start-blocstash.bat`**. A terminal window opens and prints two addresses:
+2. Go to the [BlocStash Releases page](https://github.com/BlocDigital/BlocStash/releases), download the **latest** release (the zip file), and extract it to a permanent folder, for example `C:\Users\<you>\BlocStash`.
+3. Double-click **`start-blocstash.bat`**. A terminal window opens and prints the addresses you need:
 
 ![Terminal showing the localhost address and the phone address](docs/screenshots/01-start-server.png)
 
@@ -101,6 +101,8 @@ Because this runs inside your desktop session, the **Storage** folder picker con
 7. Click **OK** to save the task.
 
 > If you set `STASH_DIR` in `start-blocstash.bat`, set the same environment variable in Windows (*System Properties → Environment Variables*) when using Task Scheduler so `node` picks it up.
+>
+> **Using Tailscale?** If the server starts before Tailscale has connected, open **Settings → Remote access** and tap **Check again**.
 
 ### Troubleshooting
 
@@ -129,14 +131,14 @@ The server runs inside the Chromebook's Linux environment. This needs a Chromebo
    ```
 
    If `node -v` shows a version older than 18, install a newer Node.js from <https://nodejs.org/en/download>. Python 3 is only used to draw the invitation QR code.
-3. **Put BlocStash in your Linux files.** In the Files app, copy the project zip into **Linux files**, then in the Terminal:
+3. **Put BlocStash in your Linux files.** Download the **latest** zip from the [BlocStash Releases page](https://github.com/BlocDigital/BlocStash/releases), copy it into **Linux files** in the Files app, then in the Terminal (replace `<downloaded-file>` with the zip's file name):
 
    ```bash
-   cd ~ && unzip blocstash-updated.zip -d blocstash && cd blocstash
+   cd ~ && unzip <downloaded-file>.zip -d blocstash && cd blocstash
    ./start-blocstash.sh
    ```
 
-   (If you get "permission denied", run `sh start-blocstash.sh` instead.)
+   (If the zip unpacks into one extra folder, `cd` into that folder before starting. If you get "permission denied", run `sh start-blocstash.sh` instead.)
 4. **Forward the port so other devices can reach it.** Phones cannot reach the Linux container directly. Go to *Settings → Advanced → Developers → Linux → Port forwarding*, add **TCP port 8787**, and make sure it is switched on.
 5. **Find the Chromebook's IP address:** *Settings → Network →* select your Wi-Fi network. Other devices open `http://<that IP address>:8787`.
 6. Open `http://localhost:8787` in Chrome on the Chromebook and create the administrator account as described above. To make invitation QR codes use the Chromebook's address, stop the server and start it again with the address set:
@@ -170,7 +172,7 @@ By default BlocStash only works on your home Wi-Fi. To use it away from home, Bl
 Start the server as usual. If Tailscale is running, the terminal shows an extra line with the remote address:
 
 ```text
-From anywhere (Tailscale): http://100.x.y.z:8787  or  http://your-pc.your-network.ts.net:8787
+Remote (Tailscale): http://100.x.y.z:8787  or  http://your-pc.your-network.ts.net:8787
 ```
 
 The administrator can also see it in the app: **Settings → Remote access**. Tap **Check again** if you installed Tailscale after starting BlocStash.
@@ -301,4 +303,4 @@ On ChromeOS, folders and drives are only visible to Linux after you share them: 
 
 New household uploads retain their original filenames on disk and are stored under `users/<username>/<year>/<month>/`. Capture date metadata is used when available; otherwise the file's last-modified date is used. Thumbnail files are stored alongside their original media with an internal dot-prefixed name. If the same account uploads two files with the same name on the same date, BlocStash adds a short unique suffix to the later stored copy; the filename shown in the library remains unchanged.
 
-Duplicate detection compares filenames only (case-insensitive). It does not read or hash the contents of selected or existing media, so it is substantially quicker, but two different files with the same filename are treated as potential duplicates.
+Duplicate detection compares the filename (case-insensitive) **and** the file size. It does not read or hash the contents of selected or existing media, so it is quick. Two files with the same name but different sizes are treated as different photos; two different photos with exactly the same name and size would be flagged as duplicates. Before checking, BlocStash reloads the library from the server, so photos deleted on another device no longer count as duplicates.
